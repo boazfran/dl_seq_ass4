@@ -587,6 +587,7 @@ if __name__ == '__main__':
         for batch_size in args.batch_size:
             for n_perspective in args.n_perspective:
                 train_model(train_data, dev_data, results, run_id, learning_rate, batch_size, n_perspective, args.n_epochs)
+                results.to_csv(args.results_file, index_label='run_id')
 
     results.to_csv(args.results_file, index_label='run_id')
     print('results are saved to ', args.results_file)

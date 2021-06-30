@@ -563,7 +563,7 @@ if __name__ == '__main__':
                                     'learning_rate', 'batch_size', 'n_perspective'])
 
     # read pretrained word embedding
-    glove_data_file = open('glove.6B.300d.txt', mode='r')
+    glove_data_file = open(args.word_embedding_file, mode='r')
     words = pd.read_table(glove_data_file, sep=" ", index_col=0, header=None, quoting=csv.QUOTE_NONE)
     glove_data_file.close()
     word2index = pd.Series(range(0, len(words)), index=words.index).to_dict()

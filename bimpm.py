@@ -503,7 +503,12 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
         accuracy = 100 * correct/(i*batch_size)
         avg_loss = running_loss/(i*batch_size)
         print(f"Train loss: {avg_loss:.3f}, Train accuracy: {accuracy:.3f}%")
-        results.loc[run_id, :] = [epoch, accuracy, avg_loss, 0, 0, 0, learning_rate, batch_size, n_perspective]
+        results.loc[run_id, 'epoch'] = epoch
+        results.loc[run_id, 'train_acc'] = accuracy.cpu()
+        results.loc[run_id, 'train_loss'] = avg_loss
+        results.loc[run_id, 'learning_rate'] = learning_rate
+        results.loc[run_id, 'batch_size'] = batch_size
+        results.loc[run_id, 'n_perspective'] = n_perspective
 
         with torch.no_grad():
             model.eval()
@@ -537,7 +542,7 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
             accuracy = 100 * correct/len(dev_data[0])
             avg_loss = running_loss/len(dev_data[0])
             print(f"Dev loss: {avg_loss:.3f}, Dev accuracy: {accuracy:.3f}%")
-            results.loc[run_id, 'dev_acc'] = accuracy
+            results.loc[run_id, 'dev_acc'] = accuracy.cpu()
             results.loc[run_id, 'dev_loss'] = avg_loss
             results.loc[run_id, 'duration_sec'] = time.time() - start
 

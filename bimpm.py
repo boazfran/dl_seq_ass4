@@ -574,7 +574,7 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
                 words_sen2 = batch[:][3].to(device)
                 batch_labels = batch[:][4].to(device)
                 output = model(chars_sen1,words_sen1, chars_sen2,  words_sen2)
-                del chars_sen1, words_sen1, chars_sen2, words_sen2, batch_labels
+                del chars_sen1, words_sen1, chars_sen2, words_sen2
                 loss = criterion(output, batch_labels)
                 running_loss += loss.item()
                 outputs_max_inds = torch.argmax(output, axis=1)

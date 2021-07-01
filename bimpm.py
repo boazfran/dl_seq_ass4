@@ -14,6 +14,8 @@ import random
 from IPython.display import clear_output
 import argparse
 import time
+from enum import Enum
+import os
 from torchinfo import summary
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -142,8 +144,15 @@ def create_batches(data, batch_size, shuffle, drop_last):
     return batches
 
 
+class Strategy(Enum):
+    full = 1
+    max_pool = 2
+    attentive = 3
+    max_attentive =4
+
+
 class BiMPM_NN(nn.Module):
-    def __init__(self, prespective_dim):
+    def __init__(self, prespective_dim, dropout, strategies):
 
         def create_init_weight_matrix():
             tmp = torch.zeros((prespective_dim, 100))
@@ -153,33 +162,37 @@ class BiMPM_NN(nn.Module):
         super(BiMPM_NN, self).__init__()
 
         self.prespective_dim = prespective_dim
+        self.strategies = strategies
 
         # drop out between the layers
-        self.dropout = nn.Dropout(p=0.1)
+        self.dropout = nn.Dropout(p=dropout)
 
         # embedding layer
         self.char_embedding_layer = nn.Embedding(len(char2index), 20, padding_idx=0)
         self.char_lstm_layer = nn.LSTM(20, 50, bidirectional=False, batch_first=True, num_layers=1)
         self.oov_word_embedding_layer = nn.Embedding(len(ukword2index)+1, 300, padding_idx=0)
         self.word_embedding_layer = nn.Embedding.from_pretrained(torch.FloatTensor(words.to_numpy()))
-        
 
         # context layer
         self.lstm_context_layer = nn.LSTM(350, 100, bidirectional=True, batch_first=True, num_layers=1)
         
         # matching strategies weights - 2 (one for each direction - backward and forward) 
         # for each one of the 4 strategies
-        self.full_matching_fw_layer = create_init_weight_matrix()
-        self.full_matching_bw_layer = create_init_weight_matrix()
-        self.max_pool_matching_fw_layer = create_init_weight_matrix()
-        self.max_pool_matching_bw_layer = create_init_weight_matrix()
-        self.atten_matching_fw_layer = create_init_weight_matrix()
-        self.atten_matching_bw_layer = create_init_weight_matrix()
-        self.max_atten_matching_fw_layer = create_init_weight_matrix()
-        self.max_atten_matching_bw_layer = create_init_weight_matrix()
+        if Strategy.full.value in strategies:
+            self.full_matching_fw_layer = create_init_weight_matrix()
+            self.full_matching_bw_layer = create_init_weight_matrix()
+        if Strategy.max_pool.value in strategies:
+            self.max_pool_matching_fw_layer = create_init_weight_matrix()
+            self.max_pool_matching_bw_layer = create_init_weight_matrix()
+        if Strategy.attentive.value in strategies:
+            self.atten_matching_fw_layer = create_init_weight_matrix()
+            self.atten_matching_bw_layer = create_init_weight_matrix()
+        if Strategy.max_attentive.value in strategies:
+            self.max_atten_matching_fw_layer = create_init_weight_matrix()
+            self.max_atten_matching_bw_layer = create_init_weight_matrix()
 
         # aggregation layer
-        self.lstm_aggregation_layer = nn.LSTM(prespective_dim*8, 
+        self.lstm_aggregation_layer = nn.LSTM(prespective_dim*2*len(strategies),
                                               100, 
                                               bidirectional=True, 
                                               batch_first=True, 
@@ -337,7 +350,9 @@ class BiMPM_NN(nn.Module):
         sentence2_word_input = sentence_word_embedding(sentence2_word_input)
 
         sen1_word_and_char_embed = torch.cat((sentence1_word_input, sentence1_char_input), dim=2)
+        del sentence1_word_input, sentence1_char_input
         sen2_word_and_char_embed = torch.cat((sentence2_word_input, sentence2_char_input), dim=2)
+        del sentence2_word_input, sentence2_char_input
 
         # drop out
         sen1_word_and_char_embed = self.dropout(sen1_word_and_char_embed)
@@ -370,58 +385,62 @@ class BiMPM_NN(nn.Module):
         s2_matches = ()
 
         ### Full Match ###
-        # Forward
-        # P -> Q
-        s1_matches += (full_matching(sen1_fw, sen2_fw[:, -1, :], self.full_matching_fw_layer),)
-        # Q -> P
-        s2_matches += (full_matching(sen2_fw, sen1_fw[:, -1, :], self.full_matching_fw_layer),)
-        
-        # Backward
-        # P -> Q
-        s1_matches += (full_matching(sen1_bw, sen2_bw[:, 0, :], self.full_matching_bw_layer),)
-        # Q -> P
-        s2_matches += (full_matching(sen2_bw, sen1_bw[:, 0, :], self.full_matching_bw_layer),)
+        if Strategy.full.value in self.strategies:
+            # Forward
+            # P -> Q
+            s1_matches += (full_matching(sen1_fw, sen2_fw[:, -1, :], self.full_matching_fw_layer),)
+            # Q -> P
+            s2_matches += (full_matching(sen2_fw, sen1_fw[:, -1, :], self.full_matching_fw_layer),)
+
+            # Backward
+            # P -> Q
+            s1_matches += (full_matching(sen1_bw, sen2_bw[:, 0, :], self.full_matching_bw_layer),)
+            # Q -> P
+            s2_matches += (full_matching(sen2_bw, sen1_bw[:, 0, :], self.full_matching_bw_layer),)
 
         ### Max Pool Match ###
-        # Forward
-        # P -> Q
-        s1_matches += (max_pool_matching(sen1_fw, sen2_fw, self.max_pool_matching_fw_layer),)
-        # Q -> P
-        s2_matches += (max_pool_matching(sen2_fw, sen1_fw, self.max_pool_matching_fw_layer),)
+        if Strategy.max_pool.value in self.strategies:
+            # Forward
+            # P -> Q
+            s1_matches += (max_pool_matching(sen1_fw, sen2_fw, self.max_pool_matching_fw_layer),)
+            # Q -> P
+            s2_matches += (max_pool_matching(sen2_fw, sen1_fw, self.max_pool_matching_fw_layer),)
 
-        # Backward
-        # P -> Q
-        s1_matches += (max_pool_matching(sen1_bw, sen2_bw, self.max_pool_matching_bw_layer),)
-        # Q -> P
-        s2_matches += (max_pool_matching(sen2_bw, sen1_bw, self.max_pool_matching_bw_layer),)   
+            # Backward
+            # P -> Q
+            s1_matches += (max_pool_matching(sen1_bw, sen2_bw, self.max_pool_matching_bw_layer),)
+            # Q -> P
+            s2_matches += (max_pool_matching(sen2_bw, sen1_bw, self.max_pool_matching_bw_layer),)
 
         ### Attentive Match ###
-        # Forward
-        fw_pairwise = pairwise_cosine_similarity(sen1_fw, sen2_fw)
-        # P -> Q
-        s1_matches += (attentive_matching(sen1_fw, sen2_fw, fw_pairwise, self.atten_matching_fw_layer),)
-        # Q -> P
-        s2_matches += (attentive_matching(sen2_fw, sen1_fw, fw_pairwise.transpose(2, 1), self.atten_matching_fw_layer),)
-       
-        # Backward
-        bw_pairwise = pairwise_cosine_similarity(sen1_bw, sen2_bw)
-        # P -> Q
-        s1_matches += (attentive_matching(sen1_bw, sen2_bw, bw_pairwise, self.atten_matching_bw_layer),)
-        # Q -> P
-        s2_matches += (attentive_matching(sen2_bw, sen1_bw, bw_pairwise.transpose(2, 1), self.atten_matching_bw_layer),)
+        if Strategy.attentive.value in self.strategies:
+            # Forward
+            fw_pairwise = pairwise_cosine_similarity(sen1_fw, sen2_fw)
+            # P -> Q
+            s1_matches += (attentive_matching(sen1_fw, sen2_fw, fw_pairwise, self.atten_matching_fw_layer),)
+            # Q -> P
+            s2_matches += (attentive_matching(sen2_fw, sen1_fw, fw_pairwise.transpose(2, 1), self.atten_matching_fw_layer),)
+
+            # Backward
+            bw_pairwise = pairwise_cosine_similarity(sen1_bw, sen2_bw)
+            # P -> Q
+            s1_matches += (attentive_matching(sen1_bw, sen2_bw, bw_pairwise, self.atten_matching_bw_layer),)
+            # Q -> P
+            s2_matches += (attentive_matching(sen2_bw, sen1_bw, bw_pairwise.transpose(2, 1), self.atten_matching_bw_layer),)
 
         ### Max Attentive Match ###
-        # Forward
-        # P -> Q
-        s1_matches += (max_attentive_matching(sen1_fw, sen2_fw, fw_pairwise, self.max_atten_matching_fw_layer),)
-        # Q -> P
-        s2_matches += (max_attentive_matching(sen2_fw, sen1_fw, fw_pairwise.transpose(2, 1), self.max_atten_matching_fw_layer),)
-        
-        # Backward
-        # P -> Q
-        s1_matches += (max_attentive_matching(sen1_bw, sen2_bw, bw_pairwise, self.max_atten_matching_bw_layer),)
-        # Q -> P
-        s2_matches += (max_attentive_matching(sen2_bw, sen1_bw, bw_pairwise.transpose(2, 1), self.max_atten_matching_bw_layer),)
+        if Strategy.max_attentive.value in self.strategies:
+            # Forward
+            # P -> Q
+            s1_matches += (max_attentive_matching(sen1_fw, sen2_fw, fw_pairwise, self.max_atten_matching_fw_layer),)
+            # Q -> P
+            s2_matches += (max_attentive_matching(sen2_fw, sen1_fw, fw_pairwise.transpose(2, 1), self.max_atten_matching_fw_layer),)
+
+            # Backward
+            # P -> Q
+            s1_matches += (max_attentive_matching(sen1_bw, sen2_bw, bw_pairwise, self.max_atten_matching_bw_layer),)
+            # Q -> P
+            s2_matches += (max_attentive_matching(sen2_bw, sen1_bw, bw_pairwise.transpose(2, 1), self.max_atten_matching_bw_layer),)
 
         s1_m = torch.cat(s1_matches, dim=2)
         del s1_matches
@@ -442,7 +461,8 @@ class BiMPM_NN(nn.Module):
         s2_m_hidden = s2_m_hidden[0]
 
         final = torch.cat((s1_m_hidden[0], s1_m_hidden[1], s2_m_hidden[0], s2_m_hidden[1]), dim=1)
-        
+        del s1_m, s2_m, s1_m_hidden, s2_m_hidden
+
         # drop out
         final = self.dropout(final)
 
@@ -464,17 +484,27 @@ def initialize_weights(model):
         nn.init.zeros_(model.bias_ih_l0)
 
 
-def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size, n_perspective, n_epochs):
+def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size, n_perspective, n_epochs, dropout, strategies):
     permute = np.array(range(len(train_data[0])))
-    model = BiMPM_NN(n_perspective)
+    model = BiMPM_NN(n_perspective, dropout, strategies)
     model.apply(initialize_weights)
     model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, eps=1e-08)
     criterion = nn.CrossEntropyLoss()
 
+    result_id = len(results)
+
     for epoch in range(n_epochs):
         model.train()
         print(f'epoch number: {epoch+1}')
+        results.loc[result_id, 'run_id'] = run_id
+        results.loc[result_id, 'learning_rate'] = learning_rate
+        results.loc[result_id, 'batch_size'] = batch_size
+        results.loc[result_id, 'n_perspective'] = n_perspective
+        results.loc[result_id, 'epoch'] = epoch
+        results.loc[result_id, 'dropout'] = dropout
+        results.loc[result_id, 'strategies'] = format(strategies)
+
         start = time.time()
         running_loss = 0.0
         correct = 0
@@ -488,27 +518,24 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
             batch_labels = batch[:][4].to(device)
             optimizer.zero_grad()
             output = model(chars_sen1,words_sen1, chars_sen2,  words_sen2)
+            del chars_sen1, words_sen1, chars_sen2, words_sen2
             loss = criterion(output, batch_labels)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
             outputs_max_inds = torch.argmax(output, axis=1)
             correct += torch.sum(outputs_max_inds == batch_labels)
+            del batch_labels
             acc_batch = 100*correct/(i*batch_size)
             if (i+1)%1000==0:
                 clear_output(wait=True)
             if (i+1)%100==0:
                 print(f"Train batch accuracy: {acc_batch:.20f}%")
-            del chars_sen1, words_sen1, chars_sen2, words_sen2, batch_labels
         accuracy = 100 * correct/(i*batch_size)
         avg_loss = running_loss/(i*batch_size)
         print(f"Train loss: {avg_loss:.3f}, Train accuracy: {accuracy:.3f}%")
-        results.loc[run_id, 'epoch'] = epoch
-        results.loc[run_id, 'train_acc'] = accuracy.cpu()
-        results.loc[run_id, 'train_loss'] = avg_loss
-        results.loc[run_id, 'learning_rate'] = learning_rate
-        results.loc[run_id, 'batch_size'] = batch_size
-        results.loc[run_id, 'n_perspective'] = n_perspective
+        results.loc[result_id, 'train_acc'] = accuracy.cpu()
+        results.loc[result_id, 'train_loss'] = avg_loss
 
         with torch.no_grad():
             model.eval()
@@ -523,10 +550,12 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
                 words_sen2 = batch[:][3].to(device)
                 batch_labels = batch[:][4].to(device)
                 output = model(chars_sen1,words_sen1, chars_sen2,  words_sen2)
+                del chars_sen1, words_sen1, chars_sen2, words_sen2
                 loss = criterion(output, batch_labels)
                 running_loss += loss.item()
                 outputs_max_inds = torch.argmax(output, axis=1)
                 correct += torch.sum(outputs_max_inds == batch_labels)
+                del batch_labels
             if len(dev_data[0]) % batch_size != 0:
                 batch = create_batch(dev_data, dev_indices, i*batch_size, len(dev_data[0]))
                 chars_sen1 = batch[:][0].to(device)
@@ -535,16 +564,18 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
                 words_sen2 = batch[:][3].to(device)
                 batch_labels = batch[:][4].to(device)
                 output = model(chars_sen1,words_sen1, chars_sen2,  words_sen2)
+                del chars_sen1, words_sen1, chars_sen2, words_sen2, batch_labels
                 loss = criterion(output, batch_labels)
                 running_loss += loss.item()
                 outputs_max_inds = torch.argmax(output, axis=1)
                 correct += torch.sum(outputs_max_inds == batch_labels)
+                del batch_labels
             accuracy = 100 * correct/len(dev_data[0])
             avg_loss = running_loss/len(dev_data[0])
             print(f"Dev loss: {avg_loss:.3f}, Dev accuracy: {accuracy:.3f}%")
-            results.loc[run_id, 'dev_acc'] = accuracy.cpu()
-            results.loc[run_id, 'dev_loss'] = avg_loss
-            results.loc[run_id, 'duration_sec'] = time.time() - start
+            results.loc[result_id, 'dev_acc'] = accuracy.cpu()
+            results.loc[result_id, 'dev_loss'] = avg_loss
+            results.loc[result_id, 'duration_sec'] = time.time() - start
 
     torch.save(model, 'run_id' + str(run_id) + '.model')
 
@@ -552,20 +583,32 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='BiMPM pytorch implementation')
-    parser.add_argument('--word_embedding_file', default='glove.6B.300d.txt', help='a pretrained word embedding file')
-    parser.add_argument('--results_file', default='results.csv', help='output file to save results')
+    parser.add_argument('--word_embedding_file', default='glove.6B.300d.txt',
+                        help='Path to the pretrained word embedding file. Default is "glove.6B.300d.txt".')
+    parser.add_argument('--snli_folder', default='./',
+                        help='Folder with the SNLI files. Default is "./')
+    parser.add_argument('--results_file', default='results.csv',
+                        help='Output file to save results. Default is "results.csv"')
     parser.add_argument('--n_epochs', default=3, type=int,
-                        help='number of train epochs')
+                        help='Number of train epochs. Default is 3.')
     parser.add_argument('--learning_rate', default=[0.001], type=float, nargs='+',
-                        help='space separated list of learning rates')
+                        help='Space separated list of learning rates. Default is 0.001')
+    parser.add_argument('--dropout', default=[0.1], type=float, nargs='+',
+                        help='Space separated list of dropouts. Default is 0.1.')
     parser.add_argument('--batch_size', default=[64], type=int, nargs='+',
-                        help='space separated list of batch sizes')
+                        help='Space separated list of batch sizes. Default is 64.')
     parser.add_argument('--n_perspective', default=[1], type=int, nargs='+',
-                        help='space separated list of perspective sizes')
+                        help='Space separated list of perspective sizes. Default is 1.')
+    parser.add_argument('--strategies', default=[Strategy.full.value, Strategy.max_pool.value,
+                                                 Strategy.attentive.value, Strategy.max_attentive.value],
+                        type=lambda x: Strategy.__members__.get(x).value, nargs='+',
+                        help='Space separated list of matching strategies - all strategies in the list will be '
+                             '*applied together* (and not in different runs) in the model. Options are: '
+                             'full/max_pool/attentive/max_attentive. Default is all strategies.')
     args = parser.parse_args()
 
-    results = pd.DataFrame(columns=['epoch', 'train_acc', 'train_loss',  'dev_acc', 'dev_loss', 'duration_sec',
-                                    'learning_rate', 'batch_size', 'n_perspective'])
+    results = pd.DataFrame(columns=['run_id', 'epoch', 'train_acc', 'train_loss',  'dev_acc', 'dev_loss', 'duration_sec',
+                                    'learning_rate', 'batch_size', 'n_perspective', 'dropout', 'strategies'])
 
     # read pretrained word embedding
     glove_data_file = open(args.word_embedding_file, mode='r')
@@ -581,18 +624,21 @@ if __name__ == '__main__':
     chars = list(string.ascii_lowercase) + list(string.digits) + list(string.punctuation)
     char2index = pd.Series(range(1, len(chars) + 1), index=chars).to_dict()
 
-    train = pd.read_csv('snli_1.0_train.txt', sep='\t')
+    train = pd.read_csv(os.path.join(args.snli_folder, 'snli_1.0_train.txt'), sep='\t')
     train_data = read_data(train, char2index, word2index, ukword2index)
 
-    dev = pd.read_csv('snli_1.0_dev.txt', sep='\t')
+    dev = pd.read_csv(os.path.join(args.snli_folder, 'snli_1.0_dev.txt'), sep='\t')
     dev_data = read_data(dev, char2index, word2index, ukword2index)
 
     run_id = 0
     for learning_rate in args.learning_rate:
-        for batch_size in args.batch_size:
-            for n_perspective in args.n_perspective:
-                train_model(train_data, dev_data, results, run_id, learning_rate, batch_size, n_perspective, args.n_epochs)
-                results.to_csv(args.results_file, index_label='run_id')
+        for dropout in args.dropout:
+            for batch_size in args.batch_size:
+                for n_perspective in args.n_perspective:
+                    train_model(train_data, dev_data, results, run_id, learning_rate, batch_size, n_perspective,
+                                args.n_epochs, dropout, args.strategies)
+                    results.to_csv(args.results_file, index_label='run_id')
+                    run_id += 1
 
-    results.to_csv(args.results_file, index_label='run_id')
+    results.to_csv(args.results_file, index=False)
     print('results are saved to ', args.results_file)

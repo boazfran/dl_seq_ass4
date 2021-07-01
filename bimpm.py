@@ -233,6 +233,8 @@ class BiMPM_NN(nn.Module):
             m2 = h2.view(h1.shape[0], 1, m1.shape[2], m1.shape[3])
 
             m = cosine_similarity(m1, m2, dim=3)
+            del m1, m2
+
             return m
 
         def full_matching(h1, h2, weights):
@@ -246,8 +248,10 @@ class BiMPM_NN(nn.Module):
             m1 = torch.stack([h1] * self.prespective_dim, dim=2) * weights
             m2 = torch.stack([h2] * self.prespective_dim, dim=1) * weights
             m2 = m2.view(m2.shape[0], 1, m2.shape[1], m2.shape[2])
+
             m = cosine_similarity(m1, m2, dim=3)
-            
+            del m1, m2
+
             return m
 
         def max_pool_matching(h1, h2, weights):
@@ -271,7 +275,9 @@ class BiMPM_NN(nn.Module):
             m1 = torch.stack(l, dim=1)
             m1 = m1.view(m1.shape[0], h1.shape[1], h2.shape[1], m1.shape[2], m1.shape[3])
             m2 = m2.view(m1.shape[0], 1, m1.shape[2], m1.shape[3], m1.shape[4])
+
             m = cosine_similarity(m1, m2, dim=4)
+            del m1, m2
             m = torch.max(m, dim=2)[0]
             
             return m
@@ -290,8 +296,10 @@ class BiMPM_NN(nn.Module):
             atten = torch.div(numerator, denominator)
             m1 = torch.stack([h1] * self.prespective_dim, dim=2) * weights
             m2 = torch.stack([atten] * self.prespective_dim, dim=2) * weights
+
             m = cosine_similarity(m1, m2, dim=3)
-            
+            del m1, m2
+
             return m
 
         def max_attentive_matching(h1, h2 ,pairwise, weights):
@@ -307,8 +315,10 @@ class BiMPM_NN(nn.Module):
 
             m1 = torch.stack([h1] * self.prespective_dim, dim=2) * weights
             m2 = torch.stack([m2] * self.prespective_dim, dim=2) * weights
+
             m = cosine_similarity(m1, m2, dim=3)
-            
+            del m1, m2
+
             return m
 
 

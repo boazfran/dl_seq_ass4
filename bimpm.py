@@ -202,6 +202,11 @@ class BiMPM_NN(nn.Module):
         self.prediction_layer = nn.Linear(400, 3)
         self.activation = nn.Tanh()
 
+        # fields to be filled before saving the model
+        self.word2index = None
+        self.char2index = None
+        self.ukword2index = None
+
 
     def init_hidden(self, hidden_dim, batch_size, lstm_num_layers, is_bidirectional):
         if is_bidirectional:
@@ -587,7 +592,9 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
             results.loc[result_id, 'dev_loss'] = avg_loss
             results.loc[result_id, 'duration_sec'] = time.time() - start
 
-    torch.save(model, 'run_id' + str(run_id) + '.model')
+        result_id += 1
+
+    return model.cpu()
 
 
 if __name__ == '__main__':
@@ -645,9 +652,13 @@ if __name__ == '__main__':
         for dropout in args.dropout:
             for batch_size in args.batch_size:
                 for n_perspective in args.n_perspective:
-                    train_model(train_data, dev_data, results, run_id, learning_rate, batch_size, n_perspective,
-                                args.n_epochs, dropout, args.strategies)
+                    model = train_model(train_data, dev_data, results, run_id, learning_rate, batch_size, n_perspective,
+                                        args.n_epochs, dropout, args.strategies)
                     results.to_csv(args.results_file, index_label='run_id')
+                    model.word2index = word2index
+                    model.char2index = char2index
+                    model.ukword2index = ukword2index
+                    torch.save(model, 'run_id' + str(run_id) + '.model')
                     run_id += 1
 
     results.to_csv(args.results_file, index=False)

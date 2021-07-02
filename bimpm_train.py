@@ -199,10 +199,9 @@ class BiMPM_NN(nn.Module):
         self.activation = nn.Tanh()
 
         # to be able to load the model and use this fields for reading test data
-        self.word2index = word2index
-        self.char2index = char2index
-        self.ukword2index = ukword2index
-
+        self.word2index = None
+        self.char2index = None
+        self.ukword2index = None
 
     def init_hidden(self, hidden_dim, batch_size, lstm_num_layers, is_bidirectional):
         if is_bidirectional:
@@ -340,7 +339,7 @@ class BiMPM_NN(nn.Module):
         def sentence_word_embedding(sentence_word_input):
             # Extract 300dim word embedding using the external embedding and 
             # trainable oov word embedding
-            oov = sentence_word_input >= len(self.word2index)
+            oov = sentence_word_input >= self.word_embedding_layer.shape[0]
             if oov.sum() == 0:
                 # easy, no oov words in this batch
                 return self.word_embedding_layer(sentence_word_input)
@@ -351,8 +350,8 @@ class BiMPM_NN(nn.Module):
             # words which doesn't have a pretrained embedding
             sentence_word_input = sentence_word_input_copy
             del sentence_word_input_copy
-            sentence_word_input -= len(self.word2index)
-            sentence_word_input[~oov] = len(self.ukword2index) + 1 # padding
+            sentence_word_input -= self.word_embedding_layer.shape[0]
+            sentence_word_input[~oov] = self.oov_word_embedding_layer.shape[0]-1# padding
             embedding[oov] = self.oov_word_embedding_layer(sentence_word_input)[oov]
             return embedding
 
@@ -594,10 +593,25 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
             results.loc[result_id, 'dev_loss'] = avg_loss
             results.loc[result_id, 'duration_sec'] = time.time() - start
 
+        ## TBD - delete this section, for debug only
+        model = model.cpu()
+        model.word2index = word2index
+        model.char2index = char2index
+        model.ukword2index = ukword2index
         torch.save(model, model_file + '.model')
+        model.word2index = None
+        model.char2index = None
+        model.ukword2index = None
+        model.to(device)
+        ####
+
         results.to_csv(results_file, index_label='run_id')
 
-    return model.cpu()
+    model = model.cpu()
+    model.word2index = word2index
+    model.char2index = char2index
+    model.ukword2index = ukword2index
+    torch.save(model, model_file + '.model')
 
 
 if __name__ == '__main__':
@@ -674,16 +688,14 @@ if __name__ == '__main__':
                 if args.model is not None:
                     model = torch.load(args.model)
                     model.dropout = nn.Dropout(p=dropout)
-                    model = train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size,
-                                        args.n_epochs, model_file, results_file)
-                    torch.save(model, model_file + '.model')
+                    train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size, args.n_epochs,
+                                model_file, results_file)
                     run_id += 1
                 else:
                     for n_perspective in args.n_perspective:
                         model = BiMPM_NN(word2index, ukword2index, char2index, n_perspective, dropout, args.strategies)
-                        model = train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size,
-                                            args.n_epochs, model_file, results_file)
-                        torch.save(model, model_file + '.model')
+                        train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size,
+                                    args.n_epochs, model_file, results_file)
                         run_id += 1
 
     results.to_csv(results_file, index_label='run_id')

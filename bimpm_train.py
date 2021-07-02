@@ -339,7 +339,7 @@ class BiMPM_NN(nn.Module):
         def sentence_word_embedding(sentence_word_input):
             # Extract 300dim word embedding using the external embedding and 
             # trainable oov word embedding
-            oov = sentence_word_input >= self.word_embedding_layer.shape[0]
+            oov = sentence_word_input >= self.word_embedding_layer.weight.shape[0]
             if oov.sum() == 0:
                 # easy, no oov words in this batch
                 return self.word_embedding_layer(sentence_word_input)
@@ -350,8 +350,8 @@ class BiMPM_NN(nn.Module):
             # words which doesn't have a pretrained embedding
             sentence_word_input = sentence_word_input_copy
             del sentence_word_input_copy
-            sentence_word_input -= self.word_embedding_layer.shape[0]
-            sentence_word_input[~oov] = self.oov_word_embedding_layer.shape[0]-1# padding
+            sentence_word_input -= self.word_embedding_layer.weight.shape[0]
+            sentence_word_input[~oov] = self.oov_word_embedding_layer.weight.shape[0]-1# padding
             embedding[oov] = self.oov_word_embedding_layer(sentence_word_input)[oov]
             return embedding
 
@@ -507,7 +507,7 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, eps=1e-08)
     criterion = nn.CrossEntropyLoss()
 
-    word_pad_idx = len(model.word2index) + len(model.ukword2index) + 1
+    word_pad_idx = len(word2index) + len(ukword2index) + 1
 
     for epoch in range(n_epochs):
         model.train()

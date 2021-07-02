@@ -1,13 +1,10 @@
 import torch
 import argparse
 import pandas as pd
-from bimpm import read_data
-from bimpm import create_batch
+from bimpm_train import *
 import numpy as np
 from torch import nn
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print('Using device: {}'.format(device))
 
 if __name__ == '__main__':
 
@@ -18,7 +15,7 @@ if __name__ == '__main__':
 
     model = torch.load(args.model)
 
-    test = pd.read_csv(args.test, sep='\t')
+    test = pd.read_csv(args.test_file, sep='\t')
     test_data = read_data(test, model.char2index, model.word2index, model.ukword2index, False)
     criterion = nn.CrossEntropyLoss()
 
@@ -28,7 +25,7 @@ if __name__ == '__main__':
         correct = 0
         dev_indices = np.array(range(len(test_data[0])))
         for i in range(len(test_data[0])):
-            batch = create_batch(test_data, dev_indices, i, i + 1)
+            batch = create_batch(test_data, dev_indices, i, i + 1, len(model.word2index) + len(model.ukword2index) + 1)
             chars_sen1 = batch[:][0].to(device)
             words_sen1 = batch[:][1].to(device)
             chars_sen2 = batch[:][2].to(device)

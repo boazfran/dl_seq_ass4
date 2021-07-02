@@ -21,6 +21,7 @@ from torchinfo import summary
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print('Using device: {}'.format(device))
 
+label2index = pd.Series([0, 1, 2], index=['neutral', 'entailment', 'contradiction'])
 
 def get_chars_vectors(sentences, char2index, is_train_set):
 
@@ -52,7 +53,7 @@ def get_chars_vectors(sentences, char2index, is_train_set):
 def get_words_vectors(sentences, word2index, ukword2index, is_train_set):
 
     # to be used only if is_train_set is False
-    oov_index = len(word2index) + len(ukword2index) + 1  # zero is the padding index
+    oov_index = len(word2index) + len(ukword2index)
 
     sentences_words = []
     for i, sentence in enumerate(sentences):
@@ -67,7 +68,7 @@ def get_words_vectors(sentences, word2index, ukword2index, is_train_set):
                 sentence_words.append(index)
                 continue
             elif is_train_set: # training set
-                ukword2index[word] = len(word2index) + len(ukword2index) + 1# +1 because zero is reserved for padding
+                ukword2index[word] = len(word2index) + len(ukword2index)
                 sentence_words.append(ukword2index[word])
             else:
                 sentence_words.append(oov_index)
@@ -99,7 +100,7 @@ def read_data(data, char2index, word2index, ukword2index, is_train_set):
     return sentence1_chars_indices, sentence2_chars_indices, sentence1_word_indices, sentence2_word_indices, labels
 
 
-def create_batch(data, permute, start, end):
+def create_batch(data, permute, start, end, word_pad_idx):
     sentence1_chars_indices = data[0][permute[start:end]]
     sentence2_chars_indices = data[1][permute[start:end]]
     sentence1_word_indices = data[2][permute[start:end]]
@@ -124,14 +125,12 @@ def create_batch(data, permute, start, end):
         for j, word_chars in enumerate(senetence_char):
             sentence2_char_input[i, j, :len(word_chars)] = LongTensor(word_chars)
 
-    word_pad_idx = len(word2index) + len(ukword2index)
-
-    sentence1_word_input = Variable(torch.ones((len(sentence1_word_indices), 
+    sentence1_word_input = Variable(torch.ones((len(sentence1_word_indices),
                                                  max_sentence1_len))).long() * word_pad_idx
     for i, senetence_words in enumerate(sentence1_word_indices):
         sentence1_word_input[i, :len(senetence_words)] = LongTensor(senetence_words)
 
-    sentence2_word_input = Variable(torch.ones((len(sentence2_word_indices), 
+    sentence2_word_input = Variable(torch.ones((len(sentence2_word_indices),
                                                  max_sentence2_len))).long() * word_pad_idx
     for i, senetence_words in enumerate(sentence2_word_indices):
         sentence2_word_input[i, :len(senetence_words)] = LongTensor(senetence_words)
@@ -139,21 +138,6 @@ def create_batch(data, permute, start, end):
     output_labels = LongTensor(labels)
 
     return TensorDataset(sentence1_char_input, sentence1_word_input, sentence2_char_input, sentence2_word_input, output_labels)
-
-
-def create_batches(data, batch_size, shuffle, drop_last):
-    permute = np.array(range(len(data[0])))
-    if shuffle:
-        random.shuffle(permute) # shuffle data every epoch  
-    
-    batches = []
-    for i in range(len(data[0])//batch_size):
-        batches.append(create_batch(data, permute, i*batch_size, (i+1)*batch_size))
-    
-    if not drop_last and (len(data[0]) % batch_size != 0):
-        batches.append(create_batch(data, permute, i*batch_size, len(data[0])))
-    
-    return batches
 
 
 class Strategy(Enum):
@@ -164,7 +148,7 @@ class Strategy(Enum):
 
 
 class BiMPM_NN(nn.Module):
-    def __init__(self, prespective_dim, dropout, strategies):
+    def __init__(self, word2index, ukword2index, char2index, prespective_dim, dropout, strategies):
 
         def create_init_weight_matrix():
             tmp = torch.zeros((prespective_dim, 100))
@@ -182,7 +166,7 @@ class BiMPM_NN(nn.Module):
         # embedding layer
         self.char_embedding_layer = nn.Embedding(len(char2index)+1, 20, padding_idx=0)
         self.char_lstm_layer = nn.LSTM(20, 50, bidirectional=False, batch_first=True, num_layers=1)
-        self.oov_word_embedding_layer = nn.Embedding(len(ukword2index)+1, 300, padding_idx=0)
+        self.oov_word_embedding_layer = nn.Embedding(len(ukword2index)+2, 300, padding_idx=len(ukword2index) + 1)
         self.word_embedding_layer = nn.Embedding.from_pretrained(torch.FloatTensor(words.to_numpy()))
 
         # context layer
@@ -214,10 +198,10 @@ class BiMPM_NN(nn.Module):
         self.prediction_layer = nn.Linear(400, 3)
         self.activation = nn.Tanh()
 
-        # fields to be filled before saving the model
-        self.word2index = None
-        self.char2index = None
-        self.ukword2index = None
+        # to be able to load the model and use this fields for reading test data
+        self.word2index = word2index
+        self.char2index = char2index
+        self.ukword2index = ukword2index
 
 
     def init_hidden(self, hidden_dim, batch_size, lstm_num_layers, is_bidirectional):
@@ -356,15 +340,21 @@ class BiMPM_NN(nn.Module):
         def sentence_word_embedding(sentence_word_input):
             # Extract 300dim word embedding using the external embedding and 
             # trainable oov word embedding
-            oov = sentence_word_input >= len(word2index)
+            oov = sentence_word_input >= len(self.word2index)
+            if sum(oov) == 0:
+                # easy, no oov words in this batch
+                return self.word_embedding_layer(sentence_word_input)
+            # words which has pretrained embedding
             sentence_word_input_copy = torch.clone(sentence_word_input)
-            sentence_word_input[oov] =  0
-            sentence_word_input = self.word_embedding_layer(sentence_word_input)
-            sentence_word_input_copy -= len(word2index)
-            sentence_word_input_copy[~oov] = 0
-            sentence_word_input_copy[sentence_word_input_copy == len(ukword2index)] = 0
-            sentence_word_input[oov] = self.word_embedding_layer(sentence_word_input_copy)[oov]
-            return sentence_word_input
+            sentence_word_input[oov] = 0
+            embedding = self.word_embedding_layer(sentence_word_input)
+            # words which doesn't have a pretrained embedding
+            sentence_word_input = sentence_word_input_copy
+            del sentence_word_input_copy
+            sentence_word_input -= len(self.word2index)
+            sentence_word_input[~oov] = len(self.ukword2index) + 1 # padding
+            embedding[oov] = self.oov_word_embedding_layer(sentence_word_input)[oov]
+            return embedding
 
         ###########################              
         ##### Embedding layer #####
@@ -520,6 +510,8 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
 
     result_id = len(results)
 
+    word_pad_idx = len(model.word2index) + len(model.ukword2index) + 1
+
     for epoch in range(n_epochs):
         model.train()
         print(f'epoch number: {epoch+1}')
@@ -536,7 +528,7 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
         correct = 0
         random.shuffle(permute) # shuffle data every epoch
         for i in [0, 1]:#range(len(train_data[0])//batch_size):
-            batch = create_batch(train_data, permute, i*batch_size, (i+1)*batch_size)
+            batch = create_batch(train_data, permute, i*batch_size, (i+1)*batch_size, word_pad_idx)
             chars_sen1 = batch[:][0].to(device)
             words_sen1 = batch[:][1].to(device)
             chars_sen2 = batch[:][2].to(device)
@@ -569,7 +561,7 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
             correct = 0
             dev_indices = np.array(range(len(dev_data[0])))
             for i in [0, 1]:#range(len(dev_data[0])//batch_size):
-                batch = create_batch(dev_data, dev_indices, i*batch_size, (i+1)*batch_size)
+                batch = create_batch(dev_data, dev_indices, i*batch_size, (i+1)*batch_size, word_pad_idx)
                 chars_sen1 = batch[:][0].to(device)
                 words_sen1 = batch[:][1].to(device)
                 chars_sen2 = batch[:][2].to(device)
@@ -583,7 +575,7 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
                 correct += torch.sum(outputs_max_inds == batch_labels)
                 del batch_labels
             if len(dev_data[0]) % batch_size != 0:
-                batch = create_batch(dev_data, dev_indices, i*batch_size, len(dev_data[0]))
+                batch = create_batch(dev_data, dev_indices, i*batch_size, len(dev_data[0]), word_pad_idx)
                 chars_sen1 = batch[:][0].to(device)
                 words_sen1 = batch[:][1].to(device)
                 chars_sen2 = batch[:][2].to(device)
@@ -611,6 +603,7 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='BiMPM pytorch implementation')
+    parser.add_argument('--output_dir', default='./', help='output dir to save the model')
     parser.add_argument('--model', help='Continue training an existing model - provide path. Default is None')
     parser.add_argument('--word_embedding_file', default='glove.6B.300d.txt',
                         help='Path to the pretrained word embedding file. Default is "glove.6B.300d.txt".')
@@ -659,9 +652,6 @@ if __name__ == '__main__':
     word2index = pd.Series(range(0, len(words)), index=words.index).to_dict()
     ukword2index = dict()
 
-    # create label mapping and read labels
-    label2index = pd.Series([0, 1, 2], index=['neutral', 'entailment', 'contradiction'])
-
     # create char mapping
     chars = list(string.ascii_lowercase) + list(string.digits) + list(string.punctuation)
     char2index = pd.Series(range(1, len(chars) + 1), index=chars).to_dict()# start from 1 because zero is for padding
@@ -686,18 +676,15 @@ if __name__ == '__main__':
                     model = train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size,
                                         args.n_epochs)
                     results.to_csv(results_file, index_label='run_id')
-                    torch.save(model, ts_str + '_run_id' + str(run_id) + '.model')
+                    torch.save(model, os.path.join(args.output_dir, ts_str + '_run_id' + str(run_id) + '.model'))
                     run_id += 1
                 else:
                     for n_perspective in args.n_perspective:
-                        model = BiMPM_NN(n_perspective, dropout, args.strategies)
+                        model = BiMPM_NN(word2index, ukword2index, char2index, n_perspective, dropout, args.strategies)
                         model = train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size,
                                             args.n_epochs)
                         results.to_csv(results_file, index_label='run_id')
-                        model.word2index = word2index
-                        model.char2index = char2index
-                        model.ukword2index = ukword2index
-                        torch.save(model, ts_str + '_run_id' + str(run_id) + '.model')
+                        torch.save(model, os.path.join(args.output_dir, ts_str + '_run_id' + str(run_id) + '.model'))
                         run_id += 1
 
     results.to_csv(results_file, index_label='run_id')

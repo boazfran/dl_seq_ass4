@@ -542,11 +542,6 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
             outputs_max_inds = torch.argmax(output, axis=1)
             correct += torch.sum(outputs_max_inds == batch_labels)
             del batch_labels
-            acc_batch = 100*correct/(i*batch_size)
-            if (i+1)%1000==0:
-                clear_output(wait=True)
-            if (i+1)%100==0:
-                print(f"Train batch accuracy: {acc_batch:.20f}%")
         accuracy = 100 * correct/(i*batch_size)
         avg_loss = running_loss/i
         print(f"Train loss: {avg_loss:.3f}, Train accuracy: {accuracy:.3f}%")

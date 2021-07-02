@@ -1,9 +1,6 @@
 The implementation includes 2 scripts:
 bimpm_train.py - for creating and training a bimpm model
 bimpm_predict.py - for testing the model against a test set
-Each script has a command-line help specifying the arguments including some hyper parameters and the location of the
-input and output files.
-The train script default argument values are the ones we used for the result we added to the report.
 
 Needed files for the running:
 - The SNLI dataset files, can be downloaded from  https://nlp.stanford.edu/projects/snli/snli_1.0.zip specifically the
@@ -23,7 +20,12 @@ Train Output:
 - The trained model.
 
 Predict Output:
-- The predict script just prints the loss and accuracy. It used batch_size 1 hard coded.
+- A print of the loss and accuracy. It used batch_size 1 hard coded.
+- An output csv file with the gold_label and the predicted label - ordered the same as in the test file (just for sanity).
+
+Each script has a command-line help specifying the arguments including some hyper parameters and the location of the
+input and output files.
+The train script default argument values are the ones we used for the result we added to the report.
 
 $ python3 bimpm_train.py --help
 usage: bimpm_train.py [-h] [--output_dir OUTPUT_DIR] [--model MODEL] [--word_embedding_file WORD_EMBEDDING_FILE] [--snli_folder SNLI_FOLDER] [--results_file RESULTS_FILE] [--n_epochs N_EPOCHS]
@@ -43,13 +45,13 @@ optional arguments:
                         Folder with the SNLI files. Default is "./
   --results_file RESULTS_FILE
                         Output file to save results. Default is "results.csv"
-  --n_epochs N_EPOCHS   Number of train epochs. Default is 3.
+  --n_epochs N_EPOCHS   Number of train epochs. Default is 5.
   --learning_rate LEARNING_RATE [LEARNING_RATE ...]
                         Space separated list of learning rates. Default is 0.001
   --dropout DROPOUT [DROPOUT ...]
-                        Space separated list of dropouts. Default is 0.1.
+                        Space separated list of dropouts. Default is 0.
   --batch_size BATCH_SIZE [BATCH_SIZE ...]
-                        Space separated list of batch sizes. Default is 64.
+                        Space separated list of batch sizes. Default is 256.
   --n_perspective N_PERSPECTIVE [N_PERSPECTIVE ...]
                         Space separated list of perspective sizes. Default is 1.
   --strategies STRATEGIES [STRATEGIES ...]
@@ -67,3 +69,5 @@ positional arguments:
 
 optional arguments:
   -h, --help  show this help message and exit
+  --batch_size BATCH_SIZE [BATCH_SIZE ...]
+                        Batch size - need to use teh same batch size which was used for the train. Default is 256.

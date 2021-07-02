@@ -501,20 +501,19 @@ def initialize_weights(model):
         nn.init.zeros_(model.bias_ih_l0)
 
 
-def train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size, n_epochs):
+def train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size, n_epochs, model_file, results_file):
     permute = np.array(range(len(train_data[0])))
     model.apply(initialize_weights)
     model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, eps=1e-08)
     criterion = nn.CrossEntropyLoss()
 
-    result_id = len(results)
-
     word_pad_idx = len(model.word2index) + len(model.ukword2index) + 1
 
     for epoch in range(n_epochs):
         model.train()
         print(f'epoch number: {epoch+1}')
+        result_id = len(results)
         results.loc[result_id, 'run_id'] = run_id
         results.loc[result_id, 'learning_rate'] = learning_rate
         results.loc[result_id, 'batch_size'] = batch_size
@@ -595,7 +594,8 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
             results.loc[result_id, 'dev_loss'] = avg_loss
             results.loc[result_id, 'duration_sec'] = time.time() - start
 
-        result_id += 1
+        torch.save(model, model_file + '.model')
+        results.to_csv(results_file, index_label='run_id')
 
     return model.cpu()
 
@@ -670,21 +670,20 @@ if __name__ == '__main__':
     for learning_rate in args.learning_rate:
         for batch_size in args.batch_size:
             for dropout in args.dropout:
+                model_file = os.path.join(args.output_dir, ts_str + '_run_id' + str(run_id) + '.model')
                 if args.model is not None:
                     model = torch.load(args.model)
                     model.dropout = nn.Dropout(p=dropout)
                     model = train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size,
-                                        args.n_epochs)
-                    results.to_csv(results_file, index_label='run_id')
-                    torch.save(model, os.path.join(args.output_dir, ts_str + '_run_id' + str(run_id) + '.model'))
+                                        args.n_epochs, model_file, results_file)
+                    torch.save(model, model_file + '.model')
                     run_id += 1
                 else:
                     for n_perspective in args.n_perspective:
                         model = BiMPM_NN(word2index, ukword2index, char2index, n_perspective, dropout, args.strategies)
                         model = train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size,
-                                            args.n_epochs)
-                        results.to_csv(results_file, index_label='run_id')
-                        torch.save(model, os.path.join(args.output_dir, ts_str + '_run_id' + str(run_id) + '.model'))
+                                            args.n_epochs, model_file, results_file)
+                        torch.save(model, model_file + '.model')
                         run_id += 1
 
     results.to_csv(results_file, index_label='run_id')

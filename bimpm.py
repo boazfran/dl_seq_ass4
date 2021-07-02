@@ -22,7 +22,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print('Using device: {}'.format(device))
 
 
-def get_chars_vectors(sentences, char2index):
+def get_chars_vectors(sentences, char2index, is_train_set):
+
+    # to be used only if is_train_set is False
+    oov_index = len(char2index) + 1  # zero is the padding index
 
     sentences_chars = []
     for sentence in sentences:
@@ -33,10 +36,12 @@ def get_chars_vectors(sentences, char2index):
                 index = char2index.get(char)
                 if char is not None:
                     word_chars.append(index)
-                    continue
-                char2index[char] = len(char2index) + 1
-                word_chars.append(char2index[char])
-            
+                elif is_train_set:
+                    char2index[char] = len(char2index) + 1  # zero is the padding index
+                    word_chars.append(char2index[char])
+                else:
+                    word_chars.append(oov_index)
+
             sentence_chars.append(word_chars)
 
         sentences_chars.append(sentence_chars)
@@ -44,7 +49,10 @@ def get_chars_vectors(sentences, char2index):
     return sentences_chars
 
 
-def get_words_vectors(sentences, word2index, ukword2index):
+def get_words_vectors(sentences, word2index, ukword2index, is_train_set):
+
+    # to be used only if is_train_set is False
+    oov_index = len(word2index) + len(ukword2index) + 1  # zero is the padding index
 
     sentences_words = []
     for i, sentence in enumerate(sentences):
@@ -58,14 +66,18 @@ def get_words_vectors(sentences, word2index, ukword2index):
             if index is not None:
                 sentence_words.append(index)
                 continue
-            ukword2index[word] = len(word2index) + len(ukword2index) + 1
-            sentence_words.append(ukword2index[word])
+            elif is_train_set: # training set
+                ukword2index[word] = len(word2index) + len(ukword2index) + 1# +1 because zero is reserved for padding
+                sentence_words.append(ukword2index[word])
+            else:
+                sentence_words.append(oov_index)
+
         sentences_words.append(sentence_words)
 
     return sentences_words
 
 
-def read_data(data, char2index, word2index, ukword2index):
+def read_data(data, char2index, word2index, ukword2index, is_train_set):
 
     data = data[data.sentence1.notna()]
     data = data[data.sentence2.notna()]
@@ -73,10 +85,10 @@ def read_data(data, char2index, word2index, ukword2index):
     tokenizer = get_tokenizer("basic_english")
     data['sentence1_words'] = list(map(lambda x: tokenizer(x), data.sentence1))
     data['sentence2_words'] = list(map(lambda x: tokenizer(x), data.sentence2))
-    sentence1_chars_indices = get_chars_vectors(data['sentence1_words'], char2index)
-    sentence2_chars_indices = get_chars_vectors(data['sentence2_words'], char2index)
-    sentence1_word_indices = get_words_vectors(data['sentence1_words'], word2index, ukword2index)
-    sentence2_word_indices = get_words_vectors(data['sentence2_words'], word2index, ukword2index)
+    sentence1_chars_indices = get_chars_vectors(data['sentence1_words'], char2index, is_train_set)
+    sentence2_chars_indices = get_chars_vectors(data['sentence2_words'], char2index, is_train_set)
+    sentence1_word_indices = get_words_vectors(data['sentence1_words'], word2index, ukword2index, is_train_set)
+    sentence2_word_indices = get_words_vectors(data['sentence2_words'], word2index, ukword2index, is_train_set)
     labels = data.gold_label.apply(lambda x: label2index[x]).to_numpy()
 
     sentence1_chars_indices = np.array(sentence1_chars_indices, dtype=object)
@@ -168,7 +180,7 @@ class BiMPM_NN(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
         # embedding layer
-        self.char_embedding_layer = nn.Embedding(len(char2index), 20, padding_idx=0)
+        self.char_embedding_layer = nn.Embedding(len(char2index)+1, 20, padding_idx=0)
         self.char_lstm_layer = nn.LSTM(20, 50, bidirectional=False, batch_first=True, num_layers=1)
         self.oov_word_embedding_layer = nn.Embedding(len(ukword2index)+1, 300, padding_idx=0)
         self.word_embedding_layer = nn.Embedding.from_pretrained(torch.FloatTensor(words.to_numpy()))
@@ -499,9 +511,8 @@ def initialize_weights(model):
         nn.init.zeros_(model.bias_ih_l0)
 
 
-def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size, n_perspective, n_epochs, dropout, strategies):
+def train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size, n_epochs):
     permute = np.array(range(len(train_data[0])))
-    model = BiMPM_NN(n_perspective, dropout, strategies)
     model.apply(initialize_weights)
     model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, eps=1e-08)
@@ -515,16 +526,16 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
         results.loc[result_id, 'run_id'] = run_id
         results.loc[result_id, 'learning_rate'] = learning_rate
         results.loc[result_id, 'batch_size'] = batch_size
-        results.loc[result_id, 'n_perspective'] = n_perspective
+        results.loc[result_id, 'n_perspective'] = model.prespective_dim
         results.loc[result_id, 'epoch'] = epoch
         results.loc[result_id, 'dropout'] = dropout
-        results.loc[result_id, 'strategies'] = format(strategies)
+        results.loc[result_id, 'strategies'] = format(model.strategies)
 
         start = time.time()
         running_loss = 0.0
         correct = 0
         random.shuffle(permute) # shuffle data every epoch
-        for i in range(len(train_data[0])//batch_size):
+        for i in [0, 1]:#range(len(train_data[0])//batch_size):
             batch = create_batch(train_data, permute, i*batch_size, (i+1)*batch_size)
             chars_sen1 = batch[:][0].to(device)
             words_sen1 = batch[:][1].to(device)
@@ -549,7 +560,7 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
         accuracy = 100 * correct/(i*batch_size)
         avg_loss = running_loss/(i*batch_size)
         print(f"Train loss: {avg_loss:.3f}, Train accuracy: {accuracy:.3f}%")
-        results.loc[result_id, 'train_acc'] = accuracy.cpu()
+        results.loc[result_id, 'train_acc'] = accuracy.cpu().float()
         results.loc[result_id, 'train_loss'] = avg_loss
 
         with torch.no_grad():
@@ -557,7 +568,7 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
             running_loss = 0.0
             correct = 0
             dev_indices = np.array(range(len(dev_data[0])))
-            for i in range(len(dev_data[0])//batch_size):
+            for i in [0, 1]:#range(len(dev_data[0])//batch_size):
                 batch = create_batch(dev_data, dev_indices, i*batch_size, (i+1)*batch_size)
                 chars_sen1 = batch[:][0].to(device)
                 words_sen1 = batch[:][1].to(device)
@@ -588,7 +599,7 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
             accuracy = 100 * correct/len(dev_data[0])
             avg_loss = running_loss/len(dev_data[0])
             print(f"Dev loss: {avg_loss:.3f}, Dev accuracy: {accuracy:.3f}%")
-            results.loc[result_id, 'dev_acc'] = accuracy.cpu()
+            results.loc[result_id, 'dev_acc'] = accuracy.cpu().float()
             results.loc[result_id, 'dev_loss'] = avg_loss
             results.loc[result_id, 'duration_sec'] = time.time() - start
 
@@ -600,6 +611,7 @@ def train_model(train_data, dev_data, results, run_id, learning_rate, batch_size
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='BiMPM pytorch implementation')
+    parser.add_argument('--model', help='Continue training an existing model - provide path. Default is None')
     parser.add_argument('--word_embedding_file', default='glove.6B.300d.txt',
                         help='Path to the pretrained word embedding file. Default is "glove.6B.300d.txt".')
     parser.add_argument('--snli_folder', default='./',
@@ -614,15 +626,28 @@ if __name__ == '__main__':
                         help='Space separated list of dropouts. Default is 0.1.')
     parser.add_argument('--batch_size', default=[64], type=int, nargs='+',
                         help='Space separated list of batch sizes. Default is 64.')
-    parser.add_argument('--n_perspective', default=[1], type=int, nargs='+',
+    parser.add_argument('--n_perspective', type=int, nargs='+',
                         help='Space separated list of perspective sizes. Default is 1.')
-    parser.add_argument('--strategies', default=[Strategy.full.value, Strategy.max_pool.value,
-                                                 Strategy.attentive.value, Strategy.max_attentive.value],
+    parser.add_argument('--strategies',
                         type=lambda x: Strategy.__members__.get(x).value, nargs='+',
                         help='Space separated list of matching strategies - all strategies in the list will be '
                              '*applied together* (and not in different runs) in the model. Options are: '
                              'full/max_pool/attentive/max_attentive. Default is all strategies.')
     args = parser.parse_args()
+
+    if args.model is not None:
+        if args.n_perspective is not None:
+            print('Cannot change perspective of an existing model')
+            exit(1)
+        elif args.strategies is not None:
+            print('Cannot change strategies of an existing model')
+            exit(1)
+    else:
+        if args.n_perspective is None:
+            args.n_perspective = [1]
+        if args.strategies is None:
+            args.strategies = [Strategy.full.value, Strategy.max_pool.value, Strategy.attentive.value,
+                               Strategy.max_attentive.value]
 
     results = pd.DataFrame(columns=['run_id', 'epoch', 'train_acc', 'train_loss',  'dev_acc', 'dev_loss', 'duration_sec',
                                     'learning_rate', 'batch_size', 'n_perspective', 'dropout', 'strategies'])
@@ -639,27 +664,41 @@ if __name__ == '__main__':
 
     # create char mapping
     chars = list(string.ascii_lowercase) + list(string.digits) + list(string.punctuation)
-    char2index = pd.Series(range(1, len(chars) + 1), index=chars).to_dict()
+    char2index = pd.Series(range(1, len(chars) + 1), index=chars).to_dict()# start from 1 because zero is for padding
 
     train = pd.read_csv(os.path.join(args.snli_folder, 'snli_1.0_train.txt'), sep='\t')
-    train_data = read_data(train, char2index, word2index, ukword2index)
+    train_data = read_data(train, char2index, word2index, ukword2index, True)
 
     dev = pd.read_csv(os.path.join(args.snli_folder, 'snli_1.0_dev.txt'), sep='\t')
-    dev_data = read_data(dev, char2index, word2index, ukword2index)
+    dev_data = read_data(dev, char2index, word2index, ukword2index, False)
+
+    ts_str = time.strftime("%Y%m%d_%H%M%S")
+
+    results_file = os.path.join(os.path.dirname(args.results_file), ts_str + '_' + os.path.basename(args.results_file))
 
     run_id = 0
     for learning_rate in args.learning_rate:
-        for dropout in args.dropout:
-            for batch_size in args.batch_size:
-                for n_perspective in args.n_perspective:
-                    model = train_model(train_data, dev_data, results, run_id, learning_rate, batch_size, n_perspective,
-                                        args.n_epochs, dropout, args.strategies)
-                    results.to_csv(args.results_file, index_label='run_id')
-                    model.word2index = word2index
-                    model.char2index = char2index
-                    model.ukword2index = ukword2index
-                    torch.save(model, 'run_id' + str(run_id) + '.model')
+        for batch_size in args.batch_size:
+            for dropout in args.dropout:
+                if args.model is not None:
+                    model = torch.load(args.model)
+                    model.dropout = nn.Dropout(p=dropout)
+                    model = train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size,
+                                        args.n_epochs)
+                    results.to_csv(results_file, index_label='run_id')
+                    torch.save(model, ts_str + '_run_id' + str(run_id) + '.model')
                     run_id += 1
+                else:
+                    for n_perspective in args.n_perspective:
+                        model = BiMPM_NN(n_perspective, dropout, args.strategies)
+                        model = train_model(model, train_data, dev_data, results, run_id, learning_rate, batch_size,
+                                            args.n_epochs)
+                        results.to_csv(results_file, index_label='run_id')
+                        model.word2index = word2index
+                        model.char2index = char2index
+                        model.ukword2index = ukword2index
+                        torch.save(model, ts_str + '_run_id' + str(run_id) + '.model')
+                        run_id += 1
 
-    results.to_csv(args.results_file, index=False)
+    results.to_csv(results_file, index_label='run_id')
     print('results are saved to ', args.results_file)

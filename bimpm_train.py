@@ -573,7 +573,7 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
                 correct += torch.sum(outputs_max_inds == batch_labels)
                 del batch_labels
             if len(dev_data[0]) % batch_size != 0:
-                batch = create_batch(dev_data, dev_indices, i*batch_size, len(dev_data[0]), word_pad_idx)
+                batch = create_batch(dev_data, dev_indices, (i+1)*batch_size, len(dev_data[0]), word_pad_idx)
                 chars_sen1 = batch[:][0].to(device)
                 words_sen1 = batch[:][1].to(device)
                 chars_sen2 = batch[:][2].to(device)
@@ -593,25 +593,15 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
             results.loc[result_id, 'dev_loss'] = avg_loss
             results.loc[result_id, 'duration_sec'] = time.time() - start
 
-        ## TBD - delete this section, for debug only
-        model = model.cpu()
-        model.word2index = word2index
-        model.char2index = char2index
-        model.ukword2index = ukword2index
-        torch.save(model, model_file + '.model')
-        model.word2index = None
-        model.char2index = None
-        model.ukword2index = None
-        model.to(device)
-        ####
-
-        results.to_csv(results_file, index_label='run_id')
+        results.to_csv(results_file)
 
     model = model.cpu()
     model.word2index = word2index
     model.char2index = char2index
     model.ukword2index = ukword2index
-    torch.save(model, model_file + '.model')
+    torch.save(model, model_file)
+    print('model file is saved to {}'.format(model_file))
+    print('results file is saved to {}'.format(results_file))
 
 
 if __name__ == '__main__':
@@ -619,20 +609,20 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='BiMPM pytorch implementation')
     parser.add_argument('--output_dir', default='./', help='output dir to save the model')
     parser.add_argument('--model', help='Continue training an existing model - provide path. Default is None')
-    parser.add_argument('--word_embedding_file', default='glove.6B.300d.txt',
-                        help='Path to the pretrained word embedding file. Default is "glove.6B.300d.txt".')
+    parser.add_argument('--word_embedding_file', default='glove.840B.300d.txt',
+                        help='Path to the pretrained word embedding file. Default is "glove.840B.300d.txt".')
     parser.add_argument('--snli_folder', default='./',
-                        help='Folder with the SNLI files. Default is "./')
+                        help='Folder with the SNLI files. Default is "."')
     parser.add_argument('--results_file', default='results.csv',
                         help='Output file to save results. Default is "results.csv"')
-    parser.add_argument('--n_epochs', default=3, type=int,
-                        help='Number of train epochs. Default is 3.')
+    parser.add_argument('--n_epochs', default=5, type=int,
+                        help='Number of train epochs. Default is 5.')
     parser.add_argument('--learning_rate', default=[0.001], type=float, nargs='+',
                         help='Space separated list of learning rates. Default is 0.001')
-    parser.add_argument('--dropout', default=[0.1], type=float, nargs='+',
-                        help='Space separated list of dropouts. Default is 0.1.')
-    parser.add_argument('--batch_size', default=[64], type=int, nargs='+',
-                        help='Space separated list of batch sizes. Default is 64.')
+    parser.add_argument('--dropout', default=[0], type=float, nargs='+',
+                        help='Space separated list of dropouts. Default is 0.')
+    parser.add_argument('--batch_size', default=[256], type=int, nargs='+',
+                        help='Space separated list of batch sizes. Default is 256.')
     parser.add_argument('--n_perspective', type=int, nargs='+',
                         help='Space separated list of perspective sizes. Default is 1.')
     parser.add_argument('--strategies',
@@ -698,5 +688,3 @@ if __name__ == '__main__':
                                     args.n_epochs, model_file, results_file)
                         run_id += 1
 
-    results.to_csv(results_file, index_label='run_id')
-    print('results are saved to ', args.results_file)

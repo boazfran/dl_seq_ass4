@@ -341,7 +341,7 @@ class BiMPM_NN(nn.Module):
             # Extract 300dim word embedding using the external embedding and 
             # trainable oov word embedding
             oov = sentence_word_input >= len(self.word2index)
-            if sum(oov) == 0:
+            if oov.sum() == 0:
                 # easy, no oov words in this batch
                 return self.word_embedding_layer(sentence_word_input)
             # words which has pretrained embedding
@@ -527,7 +527,7 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
         running_loss = 0.0
         correct = 0
         random.shuffle(permute) # shuffle data every epoch
-        for i in [0, 1]:#range(len(train_data[0])//batch_size):
+        for i in range(len(train_data[0])//batch_size):
             batch = create_batch(train_data, permute, i*batch_size, (i+1)*batch_size, word_pad_idx)
             chars_sen1 = batch[:][0].to(device)
             words_sen1 = batch[:][1].to(device)
@@ -560,7 +560,7 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
             running_loss = 0.0
             correct = 0
             dev_indices = np.array(range(len(dev_data[0])))
-            for i in [0, 1]:#range(len(dev_data[0])//batch_size):
+            for i in range(len(dev_data[0])//batch_size):
                 batch = create_batch(dev_data, dev_indices, i*batch_size, (i+1)*batch_size, word_pad_idx)
                 chars_sen1 = batch[:][0].to(device)
                 words_sen1 = batch[:][1].to(device)

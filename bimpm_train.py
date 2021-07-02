@@ -549,7 +549,7 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
             if (i+1)%100==0:
                 print(f"Train batch accuracy: {acc_batch:.20f}%")
         accuracy = 100 * correct/(i*batch_size)
-        avg_loss = running_loss/(i*batch_size)
+        avg_loss = running_loss/i
         print(f"Train loss: {avg_loss:.3f}, Train accuracy: {accuracy:.3f}%")
         results.loc[result_id, 'train_acc'] = accuracy.cpu().float()
         results.loc[result_id, 'train_loss'] = avg_loss
@@ -588,7 +588,7 @@ def train_model(model, train_data, dev_data, results, run_id, learning_rate, bat
                 correct += torch.sum(outputs_max_inds == batch_labels)
                 del batch_labels
             accuracy = 100 * correct/len(dev_data[0])
-            avg_loss = running_loss/len(dev_data[0])
+            avg_loss = running_loss/i
             print(f"Dev loss: {avg_loss:.3f}, Dev accuracy: {accuracy:.3f}%")
             results.loc[result_id, 'dev_acc'] = accuracy.cpu().float()
             results.loc[result_id, 'dev_loss'] = avg_loss

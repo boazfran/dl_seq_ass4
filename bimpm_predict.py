@@ -50,8 +50,6 @@ if __name__ == '__main__':
             predict_labels.extend(outputs_max_inds)
             del batch_labels
         if len(test_data[0]) % batch_size != 0:
-            print(len(predict_labels))
-            print(len(test_data[0]))        
             batch = create_batch(test_data, dev_indices, (i+1)*batch_size, len(test_data[0]), word_pad_idx)
             chars_sen1 = batch[:][0].to(device)
             words_sen1 = batch[:][1].to(device)
